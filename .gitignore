@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+build/
+.svelte-kit/
+dist/
+*.log
+.DS_Store
+docs/clinic-report/
+.vercel
