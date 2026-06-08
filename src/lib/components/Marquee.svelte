@@ -132,13 +132,14 @@
   }
 
   .company {
-    color: var(--ink3);
+    color: var(--ink2);
+    opacity: 0.75;
     font-size: 10px;
   }
 
   .date {
     font-size: 10px;
-    color: var(--ink3);
+    color: var(--ink2);
     background: var(--bg3);
     padding: 1px 6px;
     border-radius: 3px;
