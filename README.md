@@ -2,7 +2,7 @@
 
 Drug search and interaction checker powered by a custom Trie engine.
 
-**Live:** https://medspace-orcin.vercel.app
+**Live:** https://medspacedrugs.vercel.app
 
 ## Features
 - Prefix autocomplete with typo tolerance
