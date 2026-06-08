@@ -2,25 +2,29 @@
 
 Drug search and interaction checker powered by a custom Trie engine.
 
+**Live:** https://medspace-orcin.vercel.app
+
 ## Features
 - Prefix autocomplete with typo tolerance
 - Drug interaction checker with severity ratings
 - Lookalike drug name warnings
 - Sub-2ms responses on cached queries
 
-## How it works
+## Data structures & algorithms
 
-### Trie engine
-Each node in the Trie pre-stores the top-5 drug suggestions using a Min-Heap sorted by search frequency. This means search is O(m) where m is the prefix length — no scanning, no sorting at query time.
+### Trie + Min-Heap (`src/lib/engine/Trie.ts`, `MinHeap.ts`)
+A standard prefix Trie (`Map<string, TrieNode>` per node), but each node also keeps a **bounded Min-Heap** of the top-K drugs that pass through it, ordered by search frequency. On insert, the heap evicts the lowest-frequency entry once it exceeds size K, so each node always holds a pre-sorted shortlist. Autocomplete is then just a node walk — O(m) for a prefix of length m — with **zero scanning or sorting at query time**, since the answer is already sitting at the node.
 
-### LRU cache
-An LRU cache sits in front of the Trie. Common prefixes like "par", "ibu" hit the cache in under 1ms. Cache holds 500 entries with a 5-minute TTL.
+### LRU cache (`src/lib/server/cache.ts`, via `lru-cache`)
+Sits in front of the Trie and caches the suggestion results for recent prefixes (500 entries, 5-minute TTL). High-frequency prefixes like "par" or "ibu" resolve in under 1ms straight from the cache, skipping the Trie walk entirely.
 
-### Levenshtein edit distance
-Typo correction runs when a prefix returns no Trie results. The edit distance algorithm finds the closest matching drug name within 2 character edits. Also used to detect lookalike drug names.
+### Levenshtein edit distance (`src/lib/engine/editDistance.ts`)
+Classic O(m·n) dynamic-programming edit distance over a 2D matrix. Two uses:
+1. **Typo correction** — when a prefix returns no Trie matches, the closest drug name within 2 edits is suggested instead.
+2. **Lookalike detection** — flags drug name pairs that are dangerously similar (e.g. "Hydroxyzine" vs "Hydralazine"), surfaced as a warning badge on the drug card.
 
-### Interaction graph
-Drug interactions are stored as a bidirectional adjacency list. Any pair lookup is O(1) regardless of how many drugs exist.
+### Interaction graph (`src/lib/engine/InteractionGraph.ts`)
+Drug-drug interactions are modeled as an **undirected graph using adjacency maps** (`Map<string, Map<string, Interaction>>`). Loading an interaction inserts edges in both directions, so a severity/message lookup between any two drugs is an O(1) double map access regardless of how many drugs or interactions exist.
 
 ## Stack
 SvelteKit · TypeScript · lru-cache · OpenFDA · Railway
