@@ -19,26 +19,60 @@
   let focused = $state(false)
   let suggestions = $state<DrugEntry[]>([])
   let showSuggestions = $state(false)
+  let loading = $state(false)
+  let error = $state<{ status: number; message: string } | null>(null)
   let blurTimer: ReturnType<typeof setTimeout>
   let debounceTimer: ReturnType<typeof setTimeout>
+  let requestId = 0
+
+  function reset() {
+    requestId++
+    suggestions = []
+    showSuggestions = false
+    loading = false
+    error = null
+  }
 
   async function doSearch(q: string) {
-    if (!q) { suggestions = []; showSuggestions = false; return }
+    if (!q) { reset(); return }
+
+    const id = ++requestId
     try {
       const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`)
-      const data = await res.json()
-      if (q === value) {
-        const results: DrugEntry[] = (data.results ?? []).filter(
-          (d: DrugEntry) => d.id !== excludeId
-        )
+      const data = await res.json().catch(() => null)
+
+      // A newer keystroke has already superseded this request.
+      if (id !== requestId || q !== value) return
+
+      if (!res.ok) {
         flushSync(() => {
-          suggestions = results
-          showSuggestions = results.length > 0
+          suggestions = []
+          showSuggestions = false
+          error = {
+            status: res.status,
+            message: data?.message ?? `Request failed with status ${res.status}.`
+          }
         })
+        return
       }
+
+      const results: DrugEntry[] = (data?.results ?? []).filter(
+        (d: DrugEntry) => d.id !== excludeId
+      )
+      flushSync(() => {
+        suggestions = results
+        showSuggestions = results.length > 0
+        error = null
+      })
     } catch {
-      suggestions = []
-      showSuggestions = false
+      if (id !== requestId) return
+      flushSync(() => {
+        suggestions = []
+        showSuggestions = false
+        error = { status: 0, message: 'Network error — could not reach the server.' }
+      })
+    } finally {
+      if (id === requestId) loading = false
     }
   }
 
@@ -46,7 +80,10 @@
     const q = (e.currentTarget as HTMLInputElement).value
     value = q
     clearTimeout(debounceTimer)
-    if (!q) { suggestions = []; showSuggestions = false; return }
+    if (!q) { reset(); return }
+    // Show feedback straight away — the first query pays for the Trie build.
+    loading = true
+    error = null
     debounceTimer = setTimeout(() => doSearch(q), 300)
   }
 
@@ -62,16 +99,16 @@
 
   function handleSelect(drug: DrugEntry) {
     clearTimeout(blurTimer)
-    suggestions = []
-    showSuggestions = false
+    clearTimeout(debounceTimer)
+    reset()
     focused = false
     onselect?.(drug)
   }
 
   function handleClear() {
+    clearTimeout(debounceTimer)
     value = ''
-    suggestions = []
-    showSuggestions = false
+    reset()
     onclear?.()
   }
 
@@ -94,7 +131,8 @@
     return `${before}<em>${match}</em>${after}`
   }
 
-  const open = $derived(focused && showSuggestions && suggestions.length > 0)
+  const hasResults = $derived(showSuggestions && suggestions.length > 0)
+  const open = $derived(focused && (hasResults || loading || error !== null))
 </script>
 
 <div class="search-wrap" class:open>
@@ -116,6 +154,10 @@
       spellcheck="false"
     />
 
+    {#if loading}
+      <span class="spinner" aria-hidden="true"></span>
+    {/if}
+
     {#if value}
       <button class="btn-clear" onclick={handleClear} aria-label="Clear search">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -127,17 +169,30 @@
 
   {#if open}
     <ul class="suggestions">
-      {#each suggestions as drug (drug.id)}
-        <li>
-          <button onclick={() => handleSelect(drug)}>
-            <span class="drug-name">
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              {@html highlightPrefix(drug.brand, value)}
-            </span>
-            <span class="drug-cat">{drug.category.split('[')[0].trim()}</span>
-          </button>
+      {#if hasResults}
+        {#each suggestions as drug (drug.id)}
+          <li>
+            <button onclick={() => handleSelect(drug)}>
+              <span class="drug-name">
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                {@html highlightPrefix(drug.brand, value)}
+              </span>
+              <span class="drug-cat">{drug.category.split('[')[0].trim()}</span>
+            </button>
+          </li>
+        {/each}
+      {:else if loading}
+        <li class="row-status">
+          <span class="status-text">Searching…</span>
         </li>
-      {/each}
+      {:else if error}
+        <li class="row-status">
+          <span class="status-code">
+            {error.status === 0 ? 'ERR' : error.status}
+          </span>
+          <span class="status-text">{error.message}</span>
+        </li>
+      {/if}
     </ul>
   {/if}
 </div>
@@ -188,6 +243,24 @@
     color: var(--ink3);
   }
 
+  .spinner {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--line2);
+    border-top-color: var(--hi);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2s; }
+  }
+
   .btn-clear {
     background: none;
     border: none;
@@ -235,6 +308,32 @@
 
   .suggestions li button:hover {
     background: var(--bg3);
+  }
+
+  .row-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+
+  .status-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--red);
+    background: var(--red-bg);
+    border: 1px solid var(--red-line);
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    flex-shrink: 0;
+  }
+
+  .status-text {
+    font-size: 12px;
+    color: var(--ink3);
+    line-height: 1.4;
   }
 
   .drug-name {

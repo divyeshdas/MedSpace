@@ -10,11 +10,14 @@ export async function GET({ url }: { url: URL }) {
 
   if (q.length < 1) return json({ results: [] })
 
+  const timing = () => `${(performance.now() - start).toFixed(2)}ms`
+
   const cached = suggestCache.get(q)
   if (cached) {
+    if (cached.length === 0) return notFound(q, { 'X-Cache': 'HIT', 'X-Response-Time': timing() })
     return json(
       { results: cached },
-      { headers: { 'X-Cache': 'HIT', 'X-Response-Time': `${(performance.now() - start).toFixed(2)}ms` } }
+      { headers: { 'X-Cache': 'HIT', 'X-Response-Time': timing() } }
     )
   }
 
@@ -34,8 +37,24 @@ export async function GET({ url }: { url: URL }) {
 
   suggestCache.set(q, results)
 
+  if (results.length === 0) {
+    return notFound(q, { 'X-Cache': 'MISS', 'X-Response-Time': timing() })
+  }
+
   return json(
     { results, ...(corrected ? { corrected: true, original } : {}) },
-    { headers: { 'X-Cache': 'MISS', 'X-Response-Time': `${(performance.now() - start).toFixed(2)}ms` } }
+    { headers: { 'X-Cache': 'MISS', 'X-Response-Time': timing() } }
+  )
+}
+
+function notFound(q: string, headers: Record<string, string>) {
+  return json(
+    {
+      status: 404,
+      error: 'Not Found',
+      message: `No drug matching "${q}" was found.`,
+      results: []
+    },
+    { status: 404, headers }
   )
 }
